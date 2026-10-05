@@ -194,6 +194,40 @@ function base64Url(bytes: ArrayBuffer | Uint8Array): string {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
 }
 
+export async function redirectToCognitoLogin(): Promise<void> {
+  const { clientId, domain } = authConfig()
+  if (!domain || !clientId) return
+  const verifier = base64Url(crypto.getRandomValues(new Uint8Array(32)))
+  const state = base64Url(crypto.getRandomValues(new Uint8Array(16)))
+  const challenge = base64Url(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)),
+  )
+  sessionStorage.setItem(PKCE_KEY, JSON.stringify({ verifier, state }))
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: clientId,
+    redirect_uri: callbackUrl(),
+    scope: "openid email profile",
+    state,
+    code_challenge_method: "S256",
+    code_challenge: challenge,
+  })
+  window.location.assign(`https://${domain}/oauth2/authorize?${params}`)
+}
+
+export function logoutFromCognito(): void {
+  const { clientId, domain } = authConfig()
+  signOut()
+  if (domain && clientId) {
+    const logoutRedirect = encodeURIComponent(`${window.location.origin}/`)
+    window.location.assign(
+      `https://${domain}/logout?client_id=${clientId}&logout_uri=${logoutRedirect}`,
+    )
+  } else {
+    window.location.assign("/")
+  }
+}
+
 export async function startGoogleSignIn(): Promise<void> {
   const { clientId, domain } = authConfig()
   const verifier = base64Url(crypto.getRandomValues(new Uint8Array(32)))

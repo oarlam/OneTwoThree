@@ -3,7 +3,7 @@ import { CalendarDays, LogOut, Plus } from "lucide-react"
 import { Link, useNavigate } from "react-router"
 
 import { useMe } from "@/hooks/useMe"
-import { signOut } from "@/lib/auth"
+import { logoutFromCognito } from "@/lib/auth"
 
 interface SiteHeaderProps {
   onNewMeeting: () => void
@@ -15,8 +15,8 @@ export function SiteHeader({ onNewMeeting }: SiteHeaderProps) {
   const navigate = useNavigate()
 
   const handleSignOut = () => {
-    signOut()
     queryClient.clear()
+    logoutFromCognito()
     navigate("/", { replace: true })
   }
 
@@ -53,12 +53,14 @@ export function SiteHeader({ onNewMeeting }: SiteHeaderProps) {
           </button>
           <span className="h-8 w-px bg-white/30" />
           {me && (
-            <span
-              className="hidden max-w-48 truncate text-sm text-white/90 lg:inline"
-              title={me.email}
-            >
-              {me.name ?? me.email}
-            </span>
+            <div className="flex flex-col items-end text-xs text-white/95 sm:text-sm">
+              <span className="max-w-48 truncate font-semibold text-white" title={me.email}>
+                {me.email}
+              </span>
+              {me.name && (
+                <span className="max-w-48 truncate text-[11px] text-white/75">{me.name}</span>
+              )}
+            </div>
           )}
           <button
             type="button"
