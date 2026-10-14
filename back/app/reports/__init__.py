@@ -1,0 +1,2 @@
+"""Weekly reports module."""
+

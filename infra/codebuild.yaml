@@ -1,0 +1,117 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CodeBuild project to build and push the backend Lambda container image to ECR.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: meetings
+  Architecture:
+    Type: String
+    Default: arm64
+    AllowedValues: [arm64, amd64]
+
+Conditions:
+  IsArm: !Equals [!Ref Architecture, "arm64"]
+
+Resources:
+  SourceBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Sub "${ProjectName}-build-src-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildBasePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                Resource: !Sub "${SourceBucket.Arn}/*"
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:PutImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                Resource: !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${ProjectName}-backend"
+
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${ProjectName}-backend-builder"
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Source:
+        Type: S3
+        Location: !Sub "${SourceBucket}/${ProjectName}-source.zip"
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - echo Logging in to Amazon ECR...
+                - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+            build:
+              commands:
+                - echo Building backend Lambda image...
+                - docker build -f Dockerfile.lambda -t $IMAGE_REPO_URI:$IMAGE_TAG -t $IMAGE_REPO_URI:latest .
+            post_build:
+              commands:
+                - echo Pushing image to ECR...
+                - docker push $IMAGE_REPO_URI:$IMAGE_TAG
+                - docker push $IMAGE_REPO_URI:latest
+                - echo Build completed successfully!
+      Environment:
+        Type: !If [IsArm, "ARM_CONTAINER", "LINUX_CONTAINER"]
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: !If [IsArm, "aws/codebuild/amazonlinux2-aarch64-standard:3.0", "aws/codebuild/standard:7.0"]
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: AWS_ACCOUNT_ID
+            Value: !Sub "${AWS::AccountId}"
+          - Name: AWS_DEFAULT_REGION
+            Value: !Sub "${AWS::Region}"
+          - Name: IMAGE_REPO_URI
+            Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ProjectName}-backend"
+          - Name: IMAGE_TAG
+            Value: latest
+      TimeoutInMinutes: 20
+
+Outputs:
+  SourceBucket:
+    Value: !Ref SourceBucket
+  ProjectName:
+    Value: !Ref CodeBuildProject

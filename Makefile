@@ -32,6 +32,7 @@ BACKEND_FUNCTION  := $(PROJECT)-backend
 BACKEND_PARAMS    := infra/backend.params.env
 FRONTEND_STACK    := $(PROJECT)-frontend
 COGNITO_STACK     := $(PROJECT)-cognito
+REPORTS_STACK     := $(PROJECT)-reports
 # Every resource gets this tag (in the templates and as a stack tag).
 STACK_TAGS        := PROJECT_NAME=$(PROJECT)
 
@@ -61,6 +62,7 @@ BACKEND_PARAMS_ARGS = $(shell [ -f $(BACKEND_PARAMS) ] && grep -v -e '^[[:space:
 backend_output  = $(call stack_output,$(BACKEND_STACK),$(1))
 frontend_output = $(call stack_output,$(FRONTEND_STACK),$(1))
 cognito_output  = $(call stack_output,$(COGNITO_STACK),$(1))
+reports_output  = $(call stack_output,$(REPORTS_STACK),$(1))
 API_URL          = $(call backend_output,ApiUrl)
 FRONTEND_ORIGINS = $(call frontend_output,SiteOrigins)
 CORS_ORIGINS_AWS = $(CORS_LOCAL)$(if $(FRONTEND_ORIGINS),$(COMMA)$(FRONTEND_ORIGINS))
@@ -173,9 +175,15 @@ aws-backend-login: ## Log Docker in to ECR
 	aws ecr get-login-password | docker login --username AWS --password-stdin $(ECR_REGISTRY)
 
 .PHONY: aws-backend-push
-aws-backend-push: aws-backend-login ## Build the Lambda image for linux/$(ARCH) and push it with tag $(TAG)
-	docker buildx build --platform linux/$(ARCH) --provenance=false -f back/Dockerfile.lambda \
-	  -t $(ECR_URI):$(TAG) -t $(ECR_URI):latest --push back
+aws-backend-push: ## Build the Lambda image for linux/$(ARCH) and push it with tag $(TAG) (falls back to CodeBuild if Docker is not available)
+	@if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 && [ "$${BUILD_DRIVER:-}" != "codebuild" ]; then \
+	  $(MAKE) aws-backend-login && \
+	  docker buildx build --platform linux/$(ARCH) --provenance=false -f back/Dockerfile.lambda \
+	    -t $(ECR_URI):$(TAG) -t $(ECR_URI):latest --push back; \
+	else \
+	  echo "Docker not available locally — building via AWS CodeBuild..."; \
+	  PROJECT="$(PROJECT)" ARCH="$(ARCH)" TAG="$(TAG)" infra/scripts/build-codebuild.sh; \
+	fi
 
 .PHONY: aws-backend-stack
 aws-backend-stack: ## Create/update the backend stack (VPC, Aurora, Lambda) with image tag $(TAG); KEEP_IMAGE=1 keeps the current image
@@ -208,8 +216,8 @@ aws-backend-outputs: ## Show backend stack outputs (API URL, DB endpoint, ...)
 aws-backend-status: ## Show Lambda and Aurora status
 	@aws lambda get-function-configuration --function-name $(BACKEND_FUNCTION) \
 	  --query "{state:State, lastUpdate:LastUpdateStatus, image:CodeSha256, memory:MemorySize, timeout:Timeout}" --output yaml
-	@aws rds describe-db-clusters --db-cluster-identifier $(PROJECT)-db \
-	  --query "DBClusters[0].{status:Status, capacity:ServerlessV2ScalingConfiguration}" --output yaml
+	@aws rds describe-db-instances --db-instance-identifier $(PROJECT)-db \
+	  --query "DBInstances[0].{status:DBInstanceStatus, class:DBInstanceClass, engine:EngineVersion}" --output yaml
 
 .PHONY: aws-backend-logs
 aws-backend-logs: ## Tail backend logs from CloudWatch
@@ -350,6 +358,60 @@ aws-cognito-destroy: aws-check ## Delete the Cognito stack — ALL user accounts
 	@read -p "Delete stack $(COGNITO_STACK) and every user account in it? [y/N] " ok && [ "$$ok" = y ]
 	aws cloudformation delete-stack --stack-name $(COGNITO_STACK)
 	aws cloudformation wait stack-delete-complete --stack-name $(COGNITO_STACK)
+
+REPORTS_FROM_EMAIL ?= $(or $(shell sed -n 's/^REPORTS_FROM_EMAIL=//p' .env 2>/dev/null),arlamovskao@gmail.com)
+REPORTS_TO_EMAIL   ?= $(or $(shell sed -n 's/^REPORTS_TO_EMAIL=//p' .env 2>/dev/null),arlamovskao@gmail.com)
+
+##@ AWS reports (Event-driven weekly report on AWS)
+
+.PHONY: aws-reports-stack
+aws-reports-stack: aws-check ## Deploy or update the reports stack (SQS, EventBridge Scheduler, builder & mailer Lambdas, S3)
+	@vpc_id="$(call backend_output,VpcId)"; \
+	subnet1="$(call backend_output,PrivateSubnet1Id)"; \
+	subnet2="$(call backend_output,PrivateSubnet2Id)"; \
+	sg_id="$(call backend_output,BackendSecurityGroupId)"; \
+	rt_id="$(call backend_output,PrivateRouteTableId)"; \
+	db_host="$(call backend_output,DbEndpoint)"; \
+	db_secret="$(call backend_output,DbSecretArn)"; \
+	[ -n "$$vpc_id" ] || { echo "Backend stack not deployed: run \`make aws-backend-stack\` first"; exit 1; }; \
+	echo "Deploying $(REPORTS_STACK)..."; \
+	aws cloudformation deploy --stack-name $(REPORTS_STACK) --template-file infra/reports.yaml \
+	  --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset --tags $(STACK_TAGS) \
+	  --parameter-overrides ProjectName=$(PROJECT) ImageUri=$(ECR_URI):$(TAG) Architecture=$(LAMBDA_ARCH) \
+	    VpcId="$$vpc_id" SubnetIds="$$subnet1,$$subnet2" SecurityGroupId="$$sg_id" RouteTableId="$$rt_id" \
+	    DbHost="$$db_host" DbSecretArn="$$db_secret" \
+	    SenderEmail="$(REPORTS_FROM_EMAIL)" RecipientEmail="$(REPORTS_TO_EMAIL)"
+
+.PHONY: aws-reports-deploy
+aws-reports-deploy: aws-backend-push aws-backend-stack aws-reports-stack ## Build backend image with reports, update backend and deploy reports stack
+
+.PHONY: report-now
+report-now: aws-check ## Request an on-demand report via SQS, e.g. `make report-now WEEK=2026-W40`
+	@queue_url="$(call reports_output,QueueUrl)"; \
+	[ -n "$$queue_url" ] || { echo "Reports stack not found: run \`make aws-reports-stack\` first"; exit 1; }; \
+	echo "Sending report request to $$queue_url (week: $(or $(WEEK),previous week))..."; \
+	payload='{"week": $(if $(WEEK),"$(WEEK)",null), "source": "sqs"}'; \
+	aws sqs send-message --queue-url "$$queue_url" --message-body "$$payload" --output json
+
+.PHONY: aws-reports-logs-builder
+aws-reports-logs-builder: aws-check ## Tail CloudWatch logs for report builder Lambda
+	aws logs tail /aws/lambda/$(PROJECT)-report-builder --follow --format short
+
+.PHONY: aws-reports-logs-mailer
+aws-reports-logs-mailer: aws-check ## Tail CloudWatch logs for report mailer Lambda
+	aws logs tail /aws/lambda/$(PROJECT)-report-mailer --follow --format short
+
+.PHONY: aws-reports-outputs
+aws-reports-outputs: ## Show reports stack outputs
+	@aws cloudformation describe-stacks --stack-name $(REPORTS_STACK) \
+	  --query "Stacks[0].Outputs[].[OutputKey, OutputValue]" --output table
+
+.PHONY: aws-reports-destroy
+aws-reports-destroy: aws-check ## Delete the reports stack (empties reports bucket first)
+	@bucket="$(call reports_output,ReportsBucketName)"; \
+	[ -z "$$bucket" ] || aws s3 rm "s3://$$bucket" --recursive --quiet; \
+	aws cloudformation delete-stack --stack-name $(REPORTS_STACK); \
+	aws cloudformation wait stack-delete-complete --stack-name $(REPORTS_STACK)
 
 ##@ AWS (all parts)
 

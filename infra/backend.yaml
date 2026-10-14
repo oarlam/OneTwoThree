@@ -57,23 +57,19 @@ Parameters:
       The pool's public signing keys (JWKS JSON). Passed in because the function has no internet
       route to download them; Cognito does not rotate user pool keys.
 
-  # --- Database (Aurora Serverless v2, PostgreSQL) ---
+  # --- Database (Amazon RDS PostgreSQL, Free Tier eligible) ---
   DbEngineVersion:
     Type: String
-    Default: "16.14"
-    Description: Aurora PostgreSQL version; scaling to 0 ACU needs 13.15+, 14.12+, 15.7+ or 16.3+.
-  DbMinCapacity:
+    Default: "16.3"
+    Description: PostgreSQL engine version.
+  DbInstanceClass:
+    Type: String
+    Default: db.t4g.micro
+    Description: RDS instance class. db.t4g.micro is eligible for the AWS Free Tier.
+  DbAllocatedStorage:
     Type: Number
-    Default: 0
-    MinValue: 0
-    MaxValue: 256
-    Description: Minimum ACUs. 0 lets the database pause when idle, so you pay only for storage.
-  DbMaxCapacity:
-    Type: Number
-    Default: 1
-    MinValue: 1
-    MaxValue: 256
-    Description: Maximum ACUs (1 ACU is about 2 GiB of memory).
+    Default: 20
+    Description: Allocated storage in GB (20 GB is covered by AWS Free Tier).
   DbSecondsUntilAutoPause:
     Type: Number
     Default: 300
@@ -130,6 +126,27 @@ Resources:
         - Key: PROJECT_NAME
           Value: !Ref ProjectName
 
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-private-rt" }
+        - Key: PROJECT_NAME
+          Value: !Ref ProjectName
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
   # --- Security groups ---
   BackendSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -180,45 +197,30 @@ Resources:
       DBSubnetGroupDescription: !Sub ${ProjectName} database subnets
       SubnetIds: [!Ref PrivateSubnet1, !Ref PrivateSubnet2]
 
-  DbCluster:
-    Type: AWS::RDS::DBCluster
-    # A final snapshot is kept when the stack is deleted.
+  DbInstance:
+    Type: AWS::RDS::DBInstance
     DeletionPolicy: Snapshot
     UpdateReplacePolicy: Snapshot
     Properties:
       Tags:
         - Key: PROJECT_NAME
           Value: !Ref ProjectName
-      DBClusterIdentifier: !Sub ${ProjectName}-db
-      Engine: aurora-postgresql
+      DBInstanceIdentifier: !Sub ${ProjectName}-db
+      Engine: postgres
       EngineVersion: !Ref DbEngineVersion
-      DatabaseName: !Ref DbName
+      DBInstanceClass: !Ref DbInstanceClass
+      AllocatedStorage: !Ref DbAllocatedStorage
+      StorageType: gp2
+      DBName: !Ref DbName
       MasterUsername: !Ref DbUsername
       MasterUserPassword: !Sub "{{resolve:secretsmanager:${DbSecret}:SecretString:password}}"
       DBSubnetGroupName: !Ref DbSubnetGroup
-      VpcSecurityGroupIds: [!Ref DbSecurityGroup]
-      StorageEncrypted: true
-      CopyTagsToSnapshot: true
-      BackupRetentionPeriod: !Ref DbBackupRetentionDays
-      DeletionProtection: false
-      ServerlessV2ScalingConfiguration:
-        MinCapacity: !Ref DbMinCapacity
-        MaxCapacity: !Ref DbMaxCapacity
-        SecondsUntilAutoPause: !Ref DbSecondsUntilAutoPause
-
-  DbInstance:
-    Type: AWS::RDS::DBInstance
-    Properties:
-      Tags:
-        - Key: PROJECT_NAME
-          Value: !Ref ProjectName
-      DBInstanceIdentifier: !Sub ${ProjectName}-db-1
-      DBClusterIdentifier: !Ref DbCluster
-      Engine: aurora-postgresql
-      DBInstanceClass: db.serverless
+      VPCSecurityGroups: [!Ref DbSecurityGroup]
       PubliclyAccessible: false
       AutoMinorVersionUpgrade: true
-      EnablePerformanceInsights: false
+      BackupRetentionPeriod: !Ref DbBackupRetentionDays
+      CopyTagsToSnapshot: true
+      DeletionProtection: false
 
   # =====================================================================
   # Lambda
@@ -272,8 +274,8 @@ Resources:
         SecurityGroupIds: [!Ref BackendSecurityGroup]
       Environment:
         Variables:
-          DB_HOST: !GetAtt DbCluster.Endpoint.Address
-          DB_PORT: !GetAtt DbCluster.Endpoint.Port
+          DB_HOST: !GetAtt DbInstance.Endpoint.Address
+          DB_PORT: !GetAtt DbInstance.Endpoint.Port
           DB_NAME: !Ref DbName
           DB_USER: !Ref DbUsername
           DB_PASSWORD: !Sub "{{resolve:secretsmanager:${DbSecret}:SecretString:password}}"
@@ -322,8 +324,19 @@ Outputs:
   LogGroupName:
     Value: !Ref BackendLogGroup
   DbEndpoint:
-    Description: Aurora writer endpoint (reachable only from inside the VPC).
-    Value: !GetAtt DbCluster.Endpoint.Address
+    Description: PostgreSQL endpoint (reachable only from inside the VPC).
+    Value: !GetAtt DbInstance.Endpoint.Address
   DbSecretArn:
     Description: Secrets Manager secret with the database master credentials.
     Value: !Ref DbSecret
+  VpcId:
+    Description: VPC ID of the backend stack.
+    Value: !Ref Vpc
+  PrivateSubnet1Id:
+    Value: !Ref PrivateSubnet1
+  PrivateSubnet2Id:
+    Value: !Ref PrivateSubnet2
+  BackendSecurityGroupId:
+    Value: !Ref BackendSecurityGroup
+  PrivateRouteTableId:
+    Value: !Ref PrivateRouteTable
