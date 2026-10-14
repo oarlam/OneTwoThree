@@ -406,6 +406,12 @@ aws-reports-outputs: ## Show reports stack outputs
 	@aws cloudformation describe-stacks --stack-name $(REPORTS_STACK) \
 	  --query "Stacks[0].Outputs[].[OutputKey, OutputValue]" --output table
 
+.PHONY: aws-reports-ls
+aws-reports-ls: aws-check ## List all reports stored in the S3 reports bucket
+	@bucket="$(call reports_output,ReportsBucketName)"; \
+	[ -n "$$bucket" ] || { echo "Reports stack not found: run \`make aws-reports-stack\` first"; exit 1; }; \
+	aws s3 ls "s3://$$bucket/reports/" --recursive
+
 .PHONY: aws-reports-destroy
 aws-reports-destroy: aws-check ## Delete the reports stack (empties reports bucket first)
 	@bucket="$(call reports_output,ReportsBucketName)"; \
