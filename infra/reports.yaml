@@ -78,8 +78,7 @@ Resources:
             ExpirationInDays: 90
           - Id: DeleteRequestsAfter1Day
             Status: Enabled
-            Filter:
-              Prefix: requests/
+            Prefix: requests/
             ExpirationInDays: 1
       NotificationConfiguration:
         LambdaConfigurations:
