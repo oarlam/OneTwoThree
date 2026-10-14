@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     # The pool's JWKS as JSON. Set on AWS, where the Lambda has no internet route to fetch it;
     # when empty it is downloaded from the issuer on first use.
     cognito_jwks: str = ""
+    # S3 bucket for reports and requests (VPC S3 Gateway endpoint)
+    reports_bucket: str = ""
 
     @property
     def sqlalchemy_url(self) -> URL:

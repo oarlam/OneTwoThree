@@ -1,8 +1,11 @@
+import { useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import { CalendarDays, LogOut, Plus } from "lucide-react"
+import { CalendarDays, FileSpreadsheet, Loader2, LogOut, Plus } from "lucide-react"
 import { Link, useNavigate } from "react-router"
+import { toast } from "sonner"
 
 import { useMe } from "@/hooks/useMe"
+import { api } from "@/lib/api"
 import { logoutFromCognito } from "@/lib/auth"
 
 interface SiteHeaderProps {
@@ -13,11 +16,24 @@ export function SiteHeader({ onNewMeeting }: SiteHeaderProps) {
   const { data: me } = useMe()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
+  const [isRequestingReport, setIsRequestingReport] = useState(false)
 
   const handleSignOut = () => {
     queryClient.clear()
     logoutFromCognito()
     navigate("/", { replace: true })
+  }
+
+  const handleSendReport = async () => {
+    setIsRequestingReport(true)
+    try {
+      const res = await api.requestWeeklyReport()
+      toast.success(`Report requested for ${res.week}! You will receive an email shortly.`)
+    } catch (err) {
+      toast.error(`Could not request report: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setIsRequestingReport(false)
+    }
   }
 
   return (
@@ -50,6 +66,22 @@ export function SiteHeader({ onNewMeeting }: SiteHeaderProps) {
             className="flex items-center gap-1.5 text-sm font-semibold hover:text-white/80"
           >
             <Plus className="size-4" /> New meeting
+          </button>
+          <button
+            type="button"
+            onClick={handleSendReport}
+            disabled={isRequestingReport}
+            className="flex items-center gap-1.5 text-sm font-semibold hover:text-white/80 disabled:opacity-50"
+            title="Send me this week's report"
+          >
+            {isRequestingReport ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <FileSpreadsheet className="size-4" />
+            )}
+            <span className="hidden sm:inline">
+              {isRequestingReport ? "Requesting..." : "Send me this week's report"}
+            </span>
           </button>
           <span className="h-8 w-px bg-white/30" />
           {me && (

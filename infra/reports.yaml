@@ -66,7 +66,9 @@ Resources:
 
   ReportsBucket:
     Type: AWS::S3::Bucket
-    DependsOn: ReportMailerPermission
+    DependsOn:
+      - ReportMailerPermission
+      - ReportRequestsQueuePolicy
     Properties:
       BucketName: !Sub "${ProjectName}-reports-${AWS::AccountId}"
       LifecycleConfiguration:
@@ -74,6 +76,11 @@ Resources:
           - Id: DeleteAfter90Days
             Status: Enabled
             ExpirationInDays: 90
+          - Id: DeleteRequestsAfter1Day
+            Status: Enabled
+            Filter:
+              Prefix: requests/
+            ExpirationInDays: 1
       NotificationConfiguration:
         LambdaConfigurations:
           - Event: s3:ObjectCreated:*
@@ -85,6 +92,16 @@ Resources:
                   - Name: suffix
                     Value: .csv
             Function: !GetAtt ReportMailerFunction.Arn
+        QueueConfigurations:
+          - Event: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: requests/
+                  - Name: suffix
+                    Value: .json
+            Queue: !GetAtt ReportRequestsQueue.Arn
       Tags:
         - Key: PROJECT_NAME
           Value: !Ref ProjectName
@@ -112,6 +129,23 @@ Resources:
       Tags:
         - Key: PROJECT_NAME
           Value: !Ref ProjectName
+
+  ReportRequestsQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref ReportRequestsQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt ReportRequestsQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Sub "arn:aws:s3:::${ProjectName}-reports-${AWS::AccountId}"
 
   # =====================================================================
   # Scheduler: EventBridge Scheduler
@@ -185,6 +219,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - s3:PutObject
+                  - s3:GetObject
                 Resource: !Sub "arn:aws:s3:::${ProjectName}-reports-${AWS::AccountId}/*"
 
   ReportBuilderFunction:

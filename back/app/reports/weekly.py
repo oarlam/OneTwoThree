@@ -1,7 +1,8 @@
 import csv
 import io
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+
 from sqlalchemy.orm import Session, joinedload
 
 from app.db import SessionLocal
@@ -25,7 +26,7 @@ def parse_iso_week(week_str: str) -> tuple[datetime, datetime, str]:
 
     # Monday 00:00:00 UTC
     start_of_week = datetime.fromisocalendar(year, week, 1).replace(
-        hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc
+        hour=0, minute=0, second=0, microsecond=0, tzinfo=UTC
     )
     start_of_next_week = start_of_week + timedelta(days=7)
 
@@ -88,7 +89,12 @@ def build_weekly_report(week: str, db: Session | None = None) -> bytes:
         for m in curr_meetings:
             dur = meeting_duration_hours(m)
             owner = users_by_id.get(m.owner_id) if m.owner_id else None
-            org_label = f"{owner.name} ({owner.email})" if owner and owner.name else (owner.email if owner else "Unassigned")
+            if owner and owner.name:
+                org_label = f"{owner.name} ({owner.email})"
+            elif owner:
+                org_label = owner.email
+            else:
+                org_label = "Unassigned"
 
             if org_label not in organizer_stats:
                 organizer_stats[org_label] = {"count": 0, "hours": 0.0}
@@ -104,7 +110,9 @@ def build_weekly_report(week: str, db: Session | None = None) -> bytes:
         count_change_str = f"+{count_change}" if count_change > 0 else str(count_change)
         hours_change_str = f"+{hours_change:.1f}h" if hours_change > 0 else f"{hours_change:.1f}h"
         writer.writerow(["Total Meetings", str(curr_count), str(prev_count), count_change_str])
-        writer.writerow(["Total Duration (hours)", f"{curr_hours:.1f}", f"{prev_hours:.1f}", hours_change_str])
+        writer.writerow(
+            ["Total Duration (hours)", f"{curr_hours:.1f}", f"{prev_hours:.1f}", hours_change_str]
+        )
         writer.writerow([])
 
         # Section 2: Top 5 Longest Meetings
@@ -126,7 +134,12 @@ def build_weekly_report(week: str, db: Session | None = None) -> bytes:
         if not organizer_stats:
             writer.writerow(["No data", "0", "0.0"])
         else:
-            for org_label, stats in sorted(organizer_stats.items(), key=lambda item: item[1]["hours"], reverse=True):
+            sorted_orgs = sorted(
+                organizer_stats.items(),
+                key=lambda item: item[1]["hours"],
+                reverse=True,
+            )
+            for org_label, stats in sorted_orgs:
                 writer.writerow([org_label, str(stats["count"]), f"{stats['hours']:.2f}"])
 
         return output.getvalue().encode("utf-8")

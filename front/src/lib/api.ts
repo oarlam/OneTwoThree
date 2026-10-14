@@ -79,4 +79,13 @@ export const api = {
     request<Participant[]>(`/participants${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   createParticipant: (data: ParticipantCreate) =>
     request<Participant>("/participants", { method: "POST", body: JSON.stringify(data) }),
+
+  requestWeeklyReport: (week?: string) =>
+    request<{ status: string; week: string; request_id: string; message: string }>(
+      "/reports/request",
+      {
+        method: "POST",
+        body: JSON.stringify(week ? { week } : {}),
+      },
+    ),
 }

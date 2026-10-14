@@ -1,10 +1,15 @@
 import json
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+import re
+import urllib.parse
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import boto3
+try:
+    import boto3
+except ImportError:  # pragma: no cover
+    boto3 = None
 
 from app.reports.weekly import build_weekly_report
 
@@ -16,7 +21,7 @@ logger.setLevel(logging.INFO)
 
 def get_default_previous_week() -> str:
     """Return the previous ISO week string, e.g. '2026-W40'."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     prev_week_date = now - timedelta(days=7)
     iso_year, iso_week, _ = prev_week_date.isocalendar()
     return f"{iso_year}-W{iso_week:02d}"
@@ -31,21 +36,46 @@ def parse_event(event: dict[str, Any]) -> tuple[str, str]:
     week = None
 
     if "Records" in event and event["Records"]:
-        # SQS event
         record = event["Records"][0]
-        trigger = "sqs"
-        body_raw = record.get("body", "{}")
-        try:
-            body = json.loads(body_raw)
-            if isinstance(body, dict):
-                # If scheduler put a message with {"source": "schedule"}
-                if body.get("source") == "schedule":
-                    trigger = "schedule"
-                elif body.get("source"):
-                    trigger = str(body["source"])
-                week = body.get("week")
-        except (json.JSONDecodeError, TypeError):
-            pass
+        # Direct S3 event
+        if record.get("eventSource") == "aws:s3":
+            trigger = "s3-request"
+            s3_info = record.get("s3", {})
+            s3_key = urllib.parse.unquote_plus(s3_info.get("object", {}).get("key", ""))
+            match = re.search(r"requests/(20\d\d-W\d\d)", s3_key)
+            if match:
+                week = match.group(1)
+        else:
+            # SQS event
+            trigger = "sqs"
+            body_raw = record.get("body", "{}")
+            try:
+                body = json.loads(body_raw)
+                if isinstance(body, dict):
+                    # S3 event notification routed through SQS
+                    body_records = body.get("Records")
+                    if body_records and body_records[0].get("eventSource") == "aws:s3":
+                        trigger = "s3-request"
+                        s3_info = body_records[0].get("s3", {})
+                        s3_key = urllib.parse.unquote_plus(s3_info.get("object", {}).get("key", ""))
+                        match = re.search(r"requests/(20\d\d-W\d\d)", s3_key)
+                        if match:
+                            week = match.group(1)
+                        else:
+                            s3_bucket = s3_info.get("bucket", {}).get("name")
+                            if s3_bucket and s3_key:
+                                s3_client = boto3.client("s3")
+                                resp = s3_client.get_object(Bucket=s3_bucket, Key=s3_key)
+                                req_json = json.loads(resp["Body"].read().decode("utf-8"))
+                                week = req_json.get("week")
+                    elif body.get("source") == "schedule":
+                        trigger = "schedule"
+                    elif body.get("source"):
+                        trigger = str(body["source"])
+                    else:
+                        week = body.get("week")
+            except (json.JSONDecodeError, TypeError):
+                pass
     elif isinstance(event, dict):
         if event.get("source") == "schedule" or event.get("detail-type") == "Scheduled Event":
             trigger = "schedule"
@@ -97,4 +127,3 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
         "key": key,
         "size": len(csv_bytes),
     }
-

@@ -250,6 +250,15 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: S3PutReportRequestPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource: !Sub "arn:aws:s3:::${ProjectName}-reports-${AWS::AccountId}/requests/*"
 
   BackendFunction:
     Type: AWS::Lambda::Function
@@ -283,6 +292,7 @@ Resources:
           DB_NULL_POOL: "true"
           CORS_ORIGINS: !Ref CorsOrigins
           SEED: !Ref Seed
+          REPORTS_BUCKET: !Sub "${ProjectName}-reports-${AWS::AccountId}"
           COGNITO_REGION: !Ref AWS::Region
           COGNITO_USER_POOL_ID: !Ref CognitoUserPoolId
           COGNITO_CLIENT_ID: !Ref CognitoClientId

@@ -1,6 +1,6 @@
-import csv
-import io
-from datetime import datetime, timezone
+import json
+from datetime import UTC, datetime
+
 import pytest
 
 from app.models import Meeting, Participant, User
@@ -11,8 +11,8 @@ from tests.conftest import TestingSession
 def test_parse_iso_week():
     start, end, prev = parse_iso_week("2026-W40")
     # 2026-W40 Monday is 2026-09-28
-    assert start == datetime(2026, 9, 28, 0, 0, 0, tzinfo=timezone.utc)
-    assert end == datetime(2026, 10, 5, 0, 0, 0, tzinfo=timezone.utc)
+    assert start == datetime(2026, 9, 28, 0, 0, 0, tzinfo=UTC)
+    assert end == datetime(2026, 10, 5, 0, 0, 0, tzinfo=UTC)
     assert prev == "2026-W39"
 
     with pytest.raises(ValueError):
@@ -47,15 +47,15 @@ def test_build_weekly_report_with_meetings():
         # Current week (2026-W40: Sept 28 - Oct 4, 2026)
         m1 = Meeting(
             title="Sprint Planning",
-            starts_at=datetime(2026, 9, 28, 10, 0, 0, tzinfo=timezone.utc),
-            ends_at=datetime(2026, 9, 28, 12, 0, 0, tzinfo=timezone.utc),
+            starts_at=datetime(2026, 9, 28, 10, 0, 0, tzinfo=UTC),
+            ends_at=datetime(2026, 9, 28, 12, 0, 0, tzinfo=UTC),
             owner_id=user.id,
             participants=[p1, p2],
         )
         m2 = Meeting(
             title="Quick Sync",
-            starts_at=datetime(2026, 9, 29, 14, 0, 0, tzinfo=timezone.utc),
-            ends_at=datetime(2026, 9, 29, 14, 30, 0, tzinfo=timezone.utc),
+            starts_at=datetime(2026, 9, 29, 14, 0, 0, tzinfo=UTC),
+            ends_at=datetime(2026, 9, 29, 14, 30, 0, tzinfo=UTC),
             owner_id=user.id,
             participants=[p1],
         )
@@ -63,8 +63,8 @@ def test_build_weekly_report_with_meetings():
         # Previous week (2026-W39: Sept 21 - Sept 27, 2026)
         prev_m = Meeting(
             title="Previous Retrospective",
-            starts_at=datetime(2026, 9, 21, 10, 0, 0, tzinfo=timezone.utc),
-            ends_at=datetime(2026, 9, 21, 11, 0, 0, tzinfo=timezone.utc),
+            starts_at=datetime(2026, 9, 21, 10, 0, 0, tzinfo=UTC),
+            ends_at=datetime(2026, 9, 21, 11, 0, 0, tzinfo=UTC),
             owner_id=user.id,
             participants=[p1],
         )
@@ -84,3 +84,58 @@ def test_build_weekly_report_with_meetings():
         assert "Quick Sync" in content
         assert "Test Organizer (organizer@example.com)" in content
 
+
+def test_parse_event():
+    from app.reports.lambda_handler import parse_event
+
+    # 1. EventBridge Schedule trigger
+    schedule_event = {"source": "schedule", "week": None}
+    trigger, week = parse_event(schedule_event)
+    assert trigger == "schedule"
+    assert week.startswith("20") and "-W" in week
+
+    # 2. SQS trigger with specific week
+    sqs_event = {"Records": [{"body": '{"week": "2026-W35"}'}]}
+    trigger, week = parse_event(sqs_event)
+    assert trigger == "sqs"
+    assert week == "2026-W35"
+
+    # 3. S3 request notification routed through SQS
+    s3_sqs_event = {
+        "Records": [
+            {
+                "body": json.dumps(
+                    {
+                        "Records": [
+                            {
+                                "eventSource": "aws:s3",
+                                "s3": {
+                                    "bucket": {"name": "meetings-reports-test"},
+                                    "object": {"key": "requests/2026-W42_a1b2c3d4.json"},
+                                },
+                            }
+                        ]
+                    }
+                )
+            }
+        ]
+    }
+    trigger, week = parse_event(s3_sqs_event)
+    assert trigger == "s3-request"
+    assert week == "2026-W42"
+
+    # 4. Direct S3 event
+    direct_s3_event = {
+        "Records": [
+            {
+                "eventSource": "aws:s3",
+                "s3": {
+                    "bucket": {"name": "meetings-reports-test"},
+                    "object": {"key": "requests/2026-W43_xyz.json"},
+                },
+            }
+        ]
+    }
+    trigger, week = parse_event(direct_s3_event)
+    assert trigger == "s3-request"
+    assert week == "2026-W43"

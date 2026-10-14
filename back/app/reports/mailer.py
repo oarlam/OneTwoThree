@@ -90,4 +90,3 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
         "recipient": recipient,
         "message_id": message_id,
     }
-
