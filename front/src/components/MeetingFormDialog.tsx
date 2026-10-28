@@ -263,6 +263,16 @@ export function MeetingFormDialog({
         newSuggested.add("description")
       }
 
+      if (agenda.place) {
+        form.setValue("place", agenda.place, { shouldValidate: true })
+        newSuggested.add("place")
+      }
+
+      if (agenda.call_link) {
+        form.setValue("call_link", agenda.call_link, { shouldValidate: true })
+        newSuggested.add("call_link")
+      }
+
       setSuggestedFields(newSuggested)
       setAiSuggestion({
         model: res.model,
@@ -548,9 +558,20 @@ export function MeetingFormDialog({
                 name="call_link"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Call link</FormLabel>
+                    <FormLabel className="flex items-center">
+                      <span>Call link</span>
+                      {suggestedFields.has("call_link") && <SuggestedBadge />}
+                    </FormLabel>
                     <FormControl>
-                      <Input type="url" placeholder="https://meet.google.com/…" {...field} />
+                      <Input
+                        type="url"
+                        placeholder="https://meet.google.com/…"
+                        {...field}
+                        onChange={(e) => {
+                          removeSuggested("call_link")
+                          field.onChange(e)
+                        }}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -561,9 +582,19 @@ export function MeetingFormDialog({
                 name="place"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Place</FormLabel>
+                    <FormLabel className="flex items-center">
+                      <span>Place</span>
+                      {suggestedFields.has("place") && <SuggestedBadge />}
+                    </FormLabel>
                     <FormControl>
-                      <Input placeholder="Room 204" {...field} />
+                      <Input
+                        placeholder="Room 204"
+                        {...field}
+                        onChange={(e) => {
+                          removeSuggested("place")
+                          field.onChange(e)
+                        }}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

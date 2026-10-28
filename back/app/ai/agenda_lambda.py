@@ -88,9 +88,10 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     latency_ms = int((time.monotonic() - started) * 1000)
     calculated_cost = cost_usd(settings.parser_model, usage)
 
+    user_sub = getattr(user, "sub", None) or (user.get("sub") if isinstance(user, dict) else str(user))
     log_payload = {
         "event": "agenda_parsed",
-        "user": user.sub,
+        "user": user_sub,
         "model": settings.parser_model,
         "prompt_version": PROMPT_VERSION,
         **usage,

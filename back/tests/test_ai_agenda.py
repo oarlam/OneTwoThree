@@ -134,9 +134,10 @@ def test_parse_agenda_retry_on_validation_error():
     assert mock_client.messages.create.call_count == 2
 
 
-def test_lambda_rejects_text_over_10000():
+@patch("app.ai.agenda_lambda.verify_id_token", return_value={"sub": "test-user"})
+def test_lambda_rejects_text_over_10000(mock_verify):
     event = {
-        "headers": {},
+        "headers": {"authorization": "Bearer fake_token"},
         "body": json.dumps({"text": "a" * 10001, "today": "2026-10-28", "tz": "UTC"}),
     }
     resp = agenda_lambda.handler(event, None)
@@ -145,29 +146,33 @@ def test_lambda_rejects_text_over_10000():
     assert "10,000 characters" in body["error"]
 
 
-def test_lambda_rejects_empty_text():
+@patch("app.ai.agenda_lambda.verify_id_token", return_value={"sub": "test-user"})
+def test_lambda_rejects_empty_text(mock_verify):
     event = {
-        "headers": {},
+        "headers": {"authorization": "Bearer fake_token"},
         "body": json.dumps({"text": "", "today": "2026-10-28", "tz": "UTC"}),
     }
     resp = agenda_lambda.handler(event, None)
     assert resp["statusCode"] == 400
 
 
-def test_lambda_success_flow():
+@patch("app.ai.agenda_lambda.verify_id_token", return_value={"sub": "test-user"})
+def test_lambda_success_flow(mock_verify):
     mock_agenda = ParsedAgenda(
         title="Test Meeting",
+        place="Room 101",
         items=[AgendaItem(topic="Topic 1", minutes=15)],
         language="en",
     )
     mock_usage = {"input_tokens": 100, "output_tokens": 50}
     with patch("app.ai.agenda_lambda.parse_agenda", return_value=(mock_agenda, mock_usage)):
         event = {
-            "headers": {},
+            "headers": {"authorization": "Bearer fake_token"},
             "body": json.dumps({"text": "Topic 1 15 min", "today": "2026-10-28", "tz": "UTC"}),
         }
         resp = agenda_lambda.handler(event, None)
         assert resp["statusCode"] == 200
         body = json.loads(resp["body"])
         assert body["agenda"]["title"] == "Test Meeting"
+        assert body["agenda"]["place"] == "Room 101"
         assert body["prompt_version"] == "agenda-v1"

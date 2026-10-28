@@ -26,6 +26,8 @@ export interface ParsedAgenda {
   title?: string | null
   starts_at?: string | null
   duration_minutes?: number | null
+  place?: string | null
+  call_link?: string | null
   items: AgendaItem[]
   action_items?: ActionItem[]
   language: string
