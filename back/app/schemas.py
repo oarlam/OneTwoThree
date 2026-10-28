@@ -68,6 +68,7 @@ class MeetingCreate(BaseModel):
     starts_at: AwareDatetime
     ends_at: AwareDatetime
     participant_ids: list[UUID] = []
+    ai_suggestion: dict | None = None
 
     @field_validator("description", "call_link", "place", mode="before")
     @classmethod
@@ -99,4 +100,5 @@ class MeetingRead(BaseModel):
     ends_at: datetime
     owner_id: UUID | None
     participants: list[ParticipantRead]
+    ai_suggestion: dict | None = None
     created_at: datetime

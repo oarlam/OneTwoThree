@@ -64,4 +64,50 @@ describe("MeetingFormDialog", () => {
       participant_ids: [],
     })
   })
+
+  it("parses agenda with AI and pre-fills suggested fields", async () => {
+    const fetchMock = mockFetch((url) => {
+      if (String(url).includes("/api/ai/parse")) {
+        return {
+          body: {
+            agenda: {
+              title: "AI Planned Meeting",
+              starts_at: "2026-09-28T10:00:00.000Z",
+              duration_minutes: 45,
+              items: [{ topic: "Architecture discussion", minutes: 30 }],
+              action_items: [],
+              language: "en",
+            },
+            model: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            prompt_version: "agenda-v1",
+          },
+        }
+      }
+      return { body: [] }
+    })
+
+    renderWithQuery(<MeetingFormDialog open onOpenChange={() => {}} initialStart={START} />)
+
+    const textarea = screen.getByPlaceholderText(/Paste meeting notes/i)
+    await userEvent.type(textarea, "Architecture discussion 30 min")
+
+    const parseBtn = screen.getByRole("button", { name: /Parse with AI/i })
+    await userEvent.click(parseBtn)
+
+    expect(await screen.findByDisplayValue("AI Planned Meeting")).toBeInTheDocument()
+    expect(screen.getAllByText("suggested").length).toBeGreaterThan(0)
+
+    // Add place so form is valid and submit
+    await userEvent.type(screen.getByLabelText("Place"), "Online")
+    await userEvent.click(screen.getByRole("button", { name: "Create meeting" }))
+
+    const post = fetchMock.mock.calls.find(
+      ([url, init]) => url === "/api/meetings" && init?.method === "POST",
+    )
+    expect(post).toBeDefined()
+    const payload = JSON.parse(String(post?.[1]?.body))
+    expect(payload.title).toBe("AI Planned Meeting")
+    expect(payload.ai_suggestion).toBeDefined()
+    expect(payload.ai_suggestion.model).toBe("us.anthropic.claude-haiku-4-5-20251001-v1:0")
+  })
 })

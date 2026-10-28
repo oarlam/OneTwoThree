@@ -33,6 +33,7 @@ BACKEND_PARAMS    := infra/backend.params.env
 FRONTEND_STACK    := $(PROJECT)-frontend
 COGNITO_STACK     := $(PROJECT)-cognito
 REPORTS_STACK     := $(PROJECT)-reports
+AI_STACK          := $(PROJECT)-ai
 # Every resource gets this tag (in the templates and as a stack tag).
 STACK_TAGS        := PROJECT_NAME=$(PROJECT)
 
@@ -63,7 +64,9 @@ backend_output  = $(call stack_output,$(BACKEND_STACK),$(1))
 frontend_output = $(call stack_output,$(FRONTEND_STACK),$(1))
 cognito_output  = $(call stack_output,$(COGNITO_STACK),$(1))
 reports_output  = $(call stack_output,$(REPORTS_STACK),$(1))
+ai_output       = $(call stack_output,$(AI_STACK),$(1))
 API_URL          = $(call backend_output,ApiUrl)
+AI_URL           = $(call ai_output,FunctionUrl)
 FRONTEND_ORIGINS = $(call frontend_output,SiteOrigins)
 CORS_ORIGINS_AWS = $(CORS_LOCAL)$(if $(FRONTEND_ORIGINS),$(COMMA)$(FRONTEND_ORIGINS))
 # Cognito may redirect back (Google sign-in) to every origin the API allows.
@@ -261,7 +264,8 @@ aws-frontend-publish: ## Build the SPA with VITE_API_URL=<function URL>, upload 
 	(cd front && npm ci --no-audit --no-fund && VITE_API_URL="$$api" \
 	  VITE_COGNITO_REGION=$(AWS_REGION) VITE_COGNITO_USER_POOL_ID=$(COGNITO_POOL_ID) \
 	  VITE_COGNITO_CLIENT_ID=$(COGNITO_CLIENT) VITE_COGNITO_DOMAIN=$(call cognito_output,HostedUiDomain) \
-	  VITE_COGNITO_GOOGLE=$(call cognito_output,GoogleEnabled) npm run build) && \
+	  VITE_COGNITO_GOOGLE=$(call cognito_output,GoogleEnabled) \
+	  VITE_AI_URL="$(AI_URL)" npm run build) && \
 	aws s3 sync front/dist "s3://$$bucket" --delete --exclude index.html \
 	  --cache-control "public,max-age=31536000,immutable" && \
 	aws s3 cp front/dist/index.html "s3://$$bucket/index.html" --cache-control "no-cache" && \
@@ -418,6 +422,45 @@ aws-reports-destroy: aws-check ## Delete the reports stack (empties reports buck
 	[ -z "$$bucket" ] || aws s3 rm "s3://$$bucket" --recursive --quiet; \
 	aws cloudformation delete-stack --stack-name $(REPORTS_STACK); \
 	aws cloudformation wait stack-delete-complete --stack-name $(REPORTS_STACK)
+
+##@ AI / LLM (Amazon Bedrock Agenda Parser)
+
+PARSER_MODEL ?= $(or $(shell sed -n 's/^PARSER_MODEL=//p' .env 2>/dev/null),us.anthropic.claude-haiku-4-5-20251001-v1:0)
+
+.PHONY: llm-hello
+llm-hello: ## Test Bedrock access with PARSER_MODEL and print answer, stop_reason, usage
+	@PYTHONPATH=back back/.venv/bin/python3 -m app.ai.hello
+
+.PHONY: parse
+parse: ## Parse agenda text on laptop, e.g. `make parse TEXT="..."`
+	@PYTHONPATH=back back/.venv/bin/python3 -m app.ai.agenda_cli "$(TEXT)"
+
+.PHONY: aws-ai-stack
+aws-ai-stack: aws-check ## Deploy or update the AI agenda parser stack (outside VPC, Bedrock access)
+	@pool_id="$(call cognito_output,UserPoolId)"; \
+	client_id="$(call cognito_output,UserPoolClientId)"; \
+	echo "Deploying $(AI_STACK)..."; \
+	aws cloudformation deploy --stack-name $(AI_STACK) --template-file infra/ai.yaml \
+	  --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset --tags $(STACK_TAGS) \
+	  --parameter-overrides ProjectName=$(PROJECT) ImageUri=$(ECR_URI):$(TAG) Architecture=$(LAMBDA_ARCH) \
+	    ParserModel="$(PARSER_MODEL)" CognitoUserPoolId="$$pool_id" CognitoClientId="$$client_id"
+
+.PHONY: aws-ai-deploy
+aws-ai-deploy: aws-backend-push aws-ai-stack ## Build backend image, push to ECR and deploy AI stack
+
+.PHONY: aws-ai-logs
+aws-ai-logs: aws-check ## Tail CloudWatch logs for agenda parser Lambda
+	aws logs tail /aws/lambda/$(PROJECT)-agenda-parser --follow --format short
+
+.PHONY: aws-ai-outputs
+aws-ai-outputs: ## Show AI stack outputs
+	@aws cloudformation describe-stacks --stack-name $(AI_STACK) \
+	  --query "Stacks[0].Outputs[].[OutputKey, OutputValue]" --output table
+
+.PHONY: aws-ai-destroy
+aws-ai-destroy: aws-check ## Delete the AI stack
+	aws cloudformation delete-stack --stack-name $(AI_STACK)
+	aws cloudformation wait stack-delete-complete --stack-name $(AI_STACK)
 
 ##@ AWS (all parts)
 

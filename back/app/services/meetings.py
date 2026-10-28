@@ -54,6 +54,8 @@ def _apply(meeting: Meeting, data: MeetingCreate, participants: list[Participant
     meeting.starts_at = data.starts_at
     meeting.ends_at = data.ends_at
     meeting.participants = participants
+    if data.ai_suggestion is not None:
+        meeting.ai_suggestion = data.ai_suggestion
 
 
 def create_meeting(db: Session, data: MeetingCreate, user: User) -> Meeting:

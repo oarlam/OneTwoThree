@@ -2,6 +2,7 @@ import { getIdToken, signOut } from "@/lib/auth"
 import type {
   Meeting,
   MeetingCreate,
+  ParsedAgenda,
   Participant,
   ParticipantCreate,
   User,
@@ -33,6 +34,19 @@ function messageFrom(detail: unknown, status: number): string {
 // Backend origin, set at build time (the Lambda function URL on AWS). Empty = same origin,
 // where nginx (Docker Compose) or the Vite dev server proxies /api to the backend.
 const API_URL = (import.meta.env.VITE_API_URL ?? "").replace(/\/+$/, "")
+const AI_URL = (import.meta.env.VITE_AI_URL ?? "").replace(/\/+$/, "")
+
+export interface ParseAgendaRequest {
+  text: string
+  today: string
+  tz: string
+}
+
+export interface ParseAgendaResponse {
+  agenda: ParsedAgenda
+  model: string
+  prompt_version: string
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = await getIdToken()
@@ -88,4 +102,34 @@ export const api = {
         body: JSON.stringify(week ? { week } : {}),
       },
     ),
+
+  parseAgenda: async (
+    data: ParseAgendaRequest,
+    signal?: AbortSignal,
+  ): Promise<ParseAgendaResponse> => {
+    const token = await getIdToken()
+    const endpoint = AI_URL || `${API_URL}/api/ai/parse`
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(data),
+      signal,
+    })
+
+    if (!response.ok) {
+      let errMessage = `Parse failed (${response.status})`
+      try {
+        const errJson = await response.json()
+        if (errJson.error) errMessage = errJson.error
+      } catch {
+        // Non-JSON error
+      }
+      throw new ApiError(errMessage, response.status, errMessage)
+    }
+
+    return response.json()
+  },
 }

@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     # S3 bucket for reports and requests (VPC S3 Gateway endpoint)
     reports_bucket: str = ""
 
+    # Bedrock model for agenda parsing
+    parser_model: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
     @property
     def sqlalchemy_url(self) -> URL:
         if self.database_url:

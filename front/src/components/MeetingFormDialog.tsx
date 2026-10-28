@@ -1,6 +1,7 @@
-import { useEffect } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
+import { Loader2, Sparkles } from "lucide-react"
 import { toast } from "sonner"
 import { z } from "zod"
 
@@ -25,9 +26,9 @@ import {
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { useCreateMeeting, useUpdateMeeting } from "@/hooks/useMeetings"
-import { ApiError } from "@/lib/api"
+import { api, ApiError } from "@/lib/api"
 import { toDateInput, toTimeInput } from "@/lib/calendar"
-import type { Meeting, MeetingCreate } from "@/types"
+import type { Meeting, MeetingCreate, ParsedAgenda } from "@/types"
 
 const meetingSchema = z
   .object({
@@ -90,6 +91,41 @@ function meetingValues(meeting: Meeting): MeetingFormValues {
   }
 }
 
+function formatAgendaDescription(agenda: ParsedAgenda): string {
+  const parts: string[] = []
+  if (agenda.items && agenda.items.length > 0) {
+    parts.push("Agenda:")
+    agenda.items.forEach((item, idx) => {
+      const details: string[] = []
+      if (item.owner) details.push(item.owner)
+      if (item.minutes) details.push(`${item.minutes} min`)
+      const suffix = details.length > 0 ? ` (${details.join(", ")})` : ""
+      parts.push(`${idx + 1}. ${item.topic}${suffix}`)
+    })
+  }
+
+  if (agenda.action_items && agenda.action_items.length > 0) {
+    if (parts.length > 0) parts.push("")
+    parts.push("Action items:")
+    agenda.action_items.forEach((item) => {
+      const details: string[] = []
+      if (item.owner) details.push(item.owner)
+      if (item.due) details.push(`due ${item.due}`)
+      const suffix = details.length > 0 ? ` (${details.join(", ")})` : ""
+      parts.push(`- ${item.task}${suffix}`)
+    })
+  }
+  return parts.join("\n")
+}
+
+function SuggestedBadge() {
+  return (
+    <span className="ml-2 inline-flex items-center rounded border border-amber-500/30 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
+      suggested
+    </span>
+  )
+}
+
 const API_FIELD_TO_FORM: Record<string, keyof MeetingFormValues> = {
   title: "title",
   description: "description",
@@ -118,14 +154,156 @@ export function MeetingFormDialog({
   const createMeeting = useCreateMeeting()
   const updateMeeting = useUpdateMeeting()
   const saving = createMeeting.isPending || updateMeeting.isPending
+
+  const [rawText, setRawText] = useState("")
+  const [isParsing, setIsParsing] = useState(false)
+  const [parseError, setParseError] = useState<string | null>(null)
+  const [suggestedFields, setSuggestedFields] = useState<Set<string>>(new Set())
+  const [aiSuggestion, setAiSuggestion] = useState<{
+    model: string
+    prompt_version: string
+    suggested: ParsedAgenda
+  } | null>(null)
+
+  const abortControllerRef = useRef<AbortController | null>(null)
+
   const form = useForm<MeetingFormValues>({
     resolver: zodResolver(meetingSchema),
     defaultValues: meeting ? meetingValues(meeting) : emptyValues(initialStart),
   })
 
+  const resetAiState = () => {
+    setRawText("")
+    setParseError(null)
+    setIsParsing(false)
+    setSuggestedFields(new Set())
+    setAiSuggestion(
+      meeting?.ai_suggestion
+        ? (meeting.ai_suggestion as {
+            model: string
+            prompt_version: string
+            suggested: ParsedAgenda
+          })
+        : null,
+    )
+  }
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
+      resetAiState()
+    }
+    onOpenChange(nextOpen)
+  }
+
   useEffect(() => {
-    if (open) form.reset(meeting ? meetingValues(meeting) : emptyValues(initialStart))
+    if (open) {
+      form.reset(meeting ? meetingValues(meeting) : emptyValues(initialStart))
+    }
   }, [open, initialStart, meeting, form])
+
+  const removeSuggested = (field: string) => {
+    setSuggestedFields((prev) => {
+      if (!prev.has(field)) return prev
+      const next = new Set(prev)
+      next.delete(field)
+      return next
+    })
+  }
+
+  const handleParseAgenda = async () => {
+    if (!rawText.trim()) return
+
+    setIsParsing(true)
+    setParseError(null)
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
+    try {
+      const today = toDateInput(new Date())
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Kyiv"
+      const res = await api.parseAgenda({ text: rawText, today, tz }, controller.signal)
+
+      const agenda = res.agenda
+      const newSuggested = new Set<string>()
+
+      if (agenda.title) {
+        form.setValue("title", agenda.title, { shouldValidate: true })
+        newSuggested.add("title")
+      }
+
+      if (agenda.starts_at) {
+        const parsedStart = new Date(agenda.starts_at)
+        if (!isNaN(parsedStart.getTime())) {
+          form.setValue("date", toDateInput(parsedStart), { shouldValidate: true })
+          form.setValue("start_time", toTimeInput(parsedStart), { shouldValidate: true })
+          newSuggested.add("date")
+          newSuggested.add("start_time")
+
+          const durationMin = agenda.duration_minutes ?? 60
+          const parsedEnd = new Date(parsedStart.getTime() + durationMin * 60_000)
+          form.setValue("end_time", toTimeInput(parsedEnd), { shouldValidate: true })
+          newSuggested.add("end_time")
+        }
+      } else if (agenda.duration_minutes) {
+        const currentDate = form.getValues("date")
+        const currentStart = form.getValues("start_time")
+        if (currentDate && currentStart) {
+          const startDate = new Date(`${currentDate}T${currentStart}`)
+          if (!isNaN(startDate.getTime())) {
+            const endDate = new Date(startDate.getTime() + agenda.duration_minutes * 60_000)
+            form.setValue("end_time", toTimeInput(endDate), { shouldValidate: true })
+            newSuggested.add("end_time")
+          }
+        }
+      }
+
+      const formattedDesc = formatAgendaDescription(agenda)
+      if (formattedDesc) {
+        form.setValue("description", formattedDesc, { shouldValidate: true })
+        newSuggested.add("description")
+      }
+
+      setSuggestedFields(newSuggested)
+      setAiSuggestion({
+        model: res.model,
+        prompt_version: res.prompt_version,
+        suggested: agenda,
+      })
+      toast.success("Agenda parsed! Suggested fields are marked below.")
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        toast.info("Parsing cancelled")
+        return
+      }
+      let msg = "Failed to parse agenda. You can enter details manually."
+      if (err instanceof ApiError) {
+        if (err.status === 413) {
+          msg = "Text is too long (maximum 10,000 characters)."
+        } else if (err.status === 422) {
+          msg = "The model could not find an agenda in the pasted text."
+        } else if (err.status === 429) {
+          msg = "Service is busy (throttling), please try again shortly."
+        } else if (err.message) {
+          msg = err.message
+        }
+      } else if (err instanceof Error) {
+        msg = err.message
+      }
+      setParseError(msg)
+      toast.error(msg)
+    } finally {
+      setIsParsing(false)
+      abortControllerRef.current = null
+    }
+  }
+
+  const handleCancelParse = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+    }
+    setIsParsing(false)
+  }
 
   const onSubmit = async (values: MeetingFormValues) => {
     const data: MeetingCreate = {
@@ -136,6 +314,9 @@ export function MeetingFormDialog({
       starts_at: new Date(`${values.date}T${values.start_time}`).toISOString(),
       ends_at: new Date(`${values.date}T${values.end_time}`).toISOString(),
       participant_ids: values.participants.map((p) => p.id),
+      ...(aiSuggestion
+        ? { ai_suggestion: aiSuggestion as unknown as Record<string, unknown> }
+        : {}),
     }
     try {
       if (meeting) {
@@ -161,14 +342,72 @@ export function MeetingFormDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{meeting ? "Edit meeting" : "New meeting"}</DialogTitle>
           <DialogDescription>
             Add a call link, a place, or both so people know where to go.
           </DialogDescription>
         </DialogHeader>
+
+        {/* Paste an agenda section */}
+        <div className="space-y-2 rounded-lg border bg-muted/40 p-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+              <Sparkles className="h-3.5 w-3.5 text-primary" />
+              <span>Paste an agenda</span>
+            </div>
+            <span className="text-[11px] text-muted-foreground">AI suggests, you decide</span>
+          </div>
+          <Textarea
+            placeholder="Paste meeting notes, emails, chat messages... (e.g. 'Sync tomorrow at 10am: 1. Review PRs 20m 2. Demo 15m')"
+            value={rawText}
+            onChange={(e) => {
+              setRawText(e.target.value)
+              setParseError(null)
+            }}
+            rows={3}
+            disabled={isParsing}
+            className="bg-background text-xs"
+          />
+          {parseError && (
+            <div className="rounded border border-destructive/20 bg-destructive/10 p-2 text-xs text-destructive">
+              {parseError}
+            </div>
+          )}
+          <div className="flex items-center justify-between pt-0.5">
+            {isParsing ? (
+              <div className="flex items-center gap-2">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                <span className="text-xs text-muted-foreground">
+                  Parsing agenda with Claude (2–8s)…
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-xs text-destructive hover:bg-destructive/10"
+                  onClick={handleCancelParse}
+                >
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="ml-auto h-7 gap-1.5 text-xs font-medium"
+                onClick={handleParseAgenda}
+                disabled={!rawText.trim()}
+              >
+                <Sparkles className="h-3 w-3" />
+                Parse with AI
+              </Button>
+            )}
+          </div>
+        </div>
 
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4" noValidate>
@@ -177,9 +416,19 @@ export function MeetingFormDialog({
               name="title"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Title</FormLabel>
+                  <FormLabel className="flex items-center">
+                    <span>Title</span>
+                    {suggestedFields.has("title") && <SuggestedBadge />}
+                  </FormLabel>
                   <FormControl>
-                    <Input placeholder="Sprint planning" {...field} />
+                    <Input
+                      placeholder="Sprint planning"
+                      {...field}
+                      onChange={(e) => {
+                        removeSuggested("title")
+                        field.onChange(e)
+                      }}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -191,9 +440,19 @@ export function MeetingFormDialog({
                 name="date"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Date</FormLabel>
+                    <FormLabel className="flex items-center">
+                      <span>Date</span>
+                      {suggestedFields.has("date") && <SuggestedBadge />}
+                    </FormLabel>
                     <FormControl>
-                      <Input type="date" {...field} />
+                      <Input
+                        type="date"
+                        {...field}
+                        onChange={(e) => {
+                          removeSuggested("date")
+                          field.onChange(e)
+                        }}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -204,9 +463,19 @@ export function MeetingFormDialog({
                 name="start_time"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Start</FormLabel>
+                    <FormLabel className="flex items-center">
+                      <span>Start</span>
+                      {suggestedFields.has("start_time") && <SuggestedBadge />}
+                    </FormLabel>
                     <FormControl>
-                      <Input type="time" {...field} />
+                      <Input
+                        type="time"
+                        {...field}
+                        onChange={(e) => {
+                          removeSuggested("start_time")
+                          field.onChange(e)
+                        }}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -217,9 +486,19 @@ export function MeetingFormDialog({
                 name="end_time"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>End</FormLabel>
+                    <FormLabel className="flex items-center">
+                      <span>End</span>
+                      {suggestedFields.has("end_time") && <SuggestedBadge />}
+                    </FormLabel>
                     <FormControl>
-                      <Input type="time" {...field} />
+                      <Input
+                        type="time"
+                        {...field}
+                        onChange={(e) => {
+                          removeSuggested("end_time")
+                          field.onChange(e)
+                        }}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -231,9 +510,20 @@ export function MeetingFormDialog({
               name="description"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Description</FormLabel>
+                  <FormLabel className="flex items-center">
+                    <span>Description</span>
+                    {suggestedFields.has("description") && <SuggestedBadge />}
+                  </FormLabel>
                   <FormControl>
-                    <Textarea placeholder="What is this meeting about?" rows={3} {...field} />
+                    <Textarea
+                      placeholder="What is this meeting about?"
+                      rows={3}
+                      {...field}
+                      onChange={(e) => {
+                        removeSuggested("description")
+                        field.onChange(e)
+                      }}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
