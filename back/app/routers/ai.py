@@ -48,3 +48,4 @@ def parse(
         "model": settings.parser_model,
         "prompt_version": PROMPT_VERSION,
     }
+

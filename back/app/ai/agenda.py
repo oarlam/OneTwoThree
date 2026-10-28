@@ -139,3 +139,4 @@ def parse_agenda(text: str, today: date, tz: str) -> tuple[ParsedAgenda, dict[st
             ]
 
     raise AgendaParseError("the model returned an invalid agenda twice")
+

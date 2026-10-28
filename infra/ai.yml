@@ -87,15 +87,6 @@ Resources:
     Properties:
       TargetFunctionArn: !Ref AgendaParserFunction
       AuthType: NONE
-      Cors:
-        AllowOrigins:
-          - "*"
-        AllowMethods:
-          - POST
-        AllowHeaders:
-          - authorization
-          - content-type
-        MaxAge: 300
 
   AgendaParserFunctionUrlPermission:
     Type: AWS::Lambda::Permission

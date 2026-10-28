@@ -75,3 +75,4 @@ Main API Lambda (In VPC) ──> Aurora PostgreSQL (Saves Meeting + ai_suggestio
 - **Cost**: Pure pay-per-token pricing with $0 idle cost. Claude Haiku costs ~$0.0016 per parse (~1,200 input tokens, ~160 output tokens).
 - **Observability**: Every parse emits a structured JSON log line in CloudWatch with `user`, `model`, `prompt_version`, `input_tokens`, `output_tokens`, `latency_ms`, and calculated `cost_usd`.
 - **Fault Tolerance**: If Amazon Bedrock is throttled (HTTP 429) or unavailable, the UI displays an actionable message, and the user can type the agenda manually. All other features (calendar, authentication, reports) remain completely unaffected.
+
