@@ -32,6 +32,8 @@ Conditions:
 
 Resources:
   UserPool:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::Cognito::UserPool
     Properties:
       UserPoolName: !Sub ${ProjectName}-users
@@ -66,6 +68,8 @@ Resources:
   # Hosted UI / OAuth endpoints, needed for federated sign-in (Google). The prefix must be unique
   # across AWS, hence the account ID.
   UserPoolDomain:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::Cognito::UserPoolDomain
     Properties:
       UserPoolId: !Ref UserPool
@@ -73,6 +77,8 @@ Resources:
       ManagedLoginVersion: 2
 
   GoogleIdentityProvider:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::Cognito::UserPoolIdentityProvider
     Condition: GoogleEnabled
     Properties:
@@ -91,6 +97,8 @@ Resources:
   # Public client (no secret): the browser talks to Cognito directly. The backend only verifies
   # the ID tokens it receives.
   UserPoolClient:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::Cognito::UserPoolClient
     Properties:
       ClientName: !Sub ${ProjectName}-web
@@ -121,6 +129,8 @@ Resources:
       LogoutURLs: !Ref LogoutUrls
 
   ManagedLoginBranding:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::Cognito::ManagedLoginBranding
     DependsOn: UserPoolDomain
     Properties:

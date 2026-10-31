@@ -30,6 +30,8 @@ Parameters:
 
 Resources:
   AgendaParserRole:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::IAM::Role
     Properties:
       RoleName: !Sub "${ProjectName}-agenda-parser-role"
@@ -58,6 +60,8 @@ Resources:
           Value: !Ref ProjectName
 
   AgendaParserFunction:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub "${ProjectName}-agenda-parser"
@@ -83,12 +87,16 @@ Resources:
           Value: !Ref ProjectName
 
   AgendaParserFunctionUrl:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::Lambda::Url
     Properties:
       TargetFunctionArn: !Ref AgendaParserFunction
       AuthType: NONE
 
   AgendaParserFunctionUrlPermission:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !Ref AgendaParserFunction
@@ -97,6 +105,8 @@ Resources:
       FunctionUrlAuthType: NONE
 
   AgendaParserFunctionInvokePermission:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !Ref AgendaParserFunction

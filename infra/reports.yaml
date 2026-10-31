@@ -56,6 +56,8 @@ Resources:
   # Storage: S3 Bucket & S3 Gateway Endpoint
   # =====================================================================
   S3GatewayEndpoint:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::EC2::VPCEndpoint
     Properties:
       VpcId: !Ref VpcId
@@ -65,6 +67,8 @@ Resources:
         - !Ref RouteTableId
 
   ReportsBucket:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::S3::Bucket
     DependsOn:
       - ReportMailerPermission
@@ -109,6 +113,8 @@ Resources:
   # Queues: SQS & DLQ
   # =====================================================================
   ReportRequestsDlq:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::SQS::Queue
     Properties:
       QueueName: !Sub "${ProjectName}-report-requests-dlq"
@@ -118,6 +124,8 @@ Resources:
           Value: !Ref ProjectName
 
   ReportRequestsQueue:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::SQS::Queue
     Properties:
       QueueName: !Sub "${ProjectName}-report-requests"
@@ -130,6 +138,8 @@ Resources:
           Value: !Ref ProjectName
 
   ReportRequestsQueuePolicy:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::SQS::QueuePolicy
     Properties:
       Queues:
@@ -150,6 +160,8 @@ Resources:
   # Scheduler: EventBridge Scheduler
   # =====================================================================
   SchedulerRole:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::IAM::Role
     Properties:
       Tags:
@@ -171,6 +183,8 @@ Resources:
                 Resource: !GetAtt ReportRequestsQueue.Arn
 
   WeeklyReportSchedule:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::Scheduler::Schedule
     Properties:
       Name: !Sub "${ProjectName}-weekly-report"
@@ -187,6 +201,8 @@ Resources:
   # Builder Lambda (runs in VPC, reads Aurora, writes CSV to S3)
   # =====================================================================
   ReportBuilderLogGroup:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub "/aws/lambda/${ProjectName}-report-builder"
@@ -196,6 +212,8 @@ Resources:
           Value: !Ref ProjectName
 
   ReportBuilderRole:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::IAM::Role
     Properties:
       Tags:
@@ -222,6 +240,8 @@ Resources:
                 Resource: !Sub "arn:aws:s3:::${ProjectName}-reports-${AWS::AccountId}/*"
 
   ReportBuilderFunction:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub "${ProjectName}-report-builder"
@@ -254,6 +274,8 @@ Resources:
           Value: !Ref ProjectName
 
   ReportQueueEventSource:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::Lambda::EventSourceMapping
     Properties:
       EventSourceArn: !GetAtt ReportRequestsQueue.Arn
@@ -265,6 +287,8 @@ Resources:
   # Mailer Lambda (runs outside VPC, sends email via SES)
   # =====================================================================
   ReportMailerLogGroup:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub "/aws/lambda/${ProjectName}-report-mailer"
@@ -274,6 +298,8 @@ Resources:
           Value: !Ref ProjectName
 
   ReportMailerRole:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::IAM::Role
     Properties:
       Tags:
@@ -302,6 +328,8 @@ Resources:
                 Resource: "*"
 
   ReportMailerFunction:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub "${ProjectName}-report-mailer"
@@ -388,6 +416,8 @@ Resources:
           Value: !Ref ProjectName
 
   ReportMailerPermission:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !Ref ReportMailerFunction

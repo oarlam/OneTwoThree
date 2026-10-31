@@ -62,18 +62,20 @@ ECR_REGISTRY = $(firstword $(subst /, ,$(ECR_URI)))
 BACKEND_PARAMS_ARGS = $(shell [ -f $(BACKEND_PARAMS) ] && grep -v -e '^[[:space:]]*$(HASH)' -e '^[[:space:]]*$$' $(BACKEND_PARAMS))
 backend_output  = $(call stack_output,$(BACKEND_STACK),$(1))
 frontend_output = $(call stack_output,$(FRONTEND_STACK),$(1))
-cognito_output  = $(call stack_output,$(COGNITO_STACK),$(1))
-reports_output  = $(call stack_output,$(REPORTS_STACK),$(1))
-ai_output       = $(call stack_output,$(AI_STACK),$(1))
+# Terraform outputs for auth, reports, and AI infrastructure
+tf_output       = $(shell cd infra && terraform output -raw $(1) 2>/dev/null)
+cognito_output  = $(call tf_output,$(1))
+reports_output  = $(call tf_output,$(1))
+ai_output       = $(call tf_output,$(1))
 API_URL          = $(call backend_output,ApiUrl)
-AI_URL           = $(call ai_output,FunctionUrl)
+AI_URL           = $(call tf_output,parser_function_url)
 FRONTEND_ORIGINS = $(call frontend_output,SiteOrigins)
 CORS_ORIGINS_AWS = $(CORS_LOCAL)$(if $(FRONTEND_ORIGINS),$(COMMA)$(FRONTEND_ORIGINS))
 # Cognito may redirect back (Google sign-in) to every origin the API allows.
 COGNITO_CALLBACK_URLS = $(subst $(COMMA),/auth/callback$(COMMA),$(CORS_ORIGINS_AWS))/auth/callback
 COGNITO_LOGOUT_URLS   = $(subst $(COMMA),/$(COMMA),$(CORS_ORIGINS_AWS))/
-COGNITO_POOL_ID   = $(call cognito_output,UserPoolId)
-COGNITO_CLIENT    = $(call cognito_output,UserPoolClientId)
+COGNITO_POOL_ID   = $(call tf_output,user_pool_id)
+COGNITO_CLIENT    = $(call tf_output,user_pool_client_id)
 FRONTEND_CERT_ARN = $(if $(FRONTEND_DOMAIN),$(shell $(LOAD_ENV) $(CERT_SH) arn $(FRONTEND_DOMAIN) 2>/dev/null))
 FRONTEND_ZONE_ID  = $(shell $(LOAD_ENV) $(CERT_SH) zone-id $(FRONTEND_DOMAIN) 2>/dev/null)
 # The custom domain is attached once its certificate is issued; until then only the CloudFront domain serves.
@@ -341,16 +343,24 @@ aws-cognito-stack: ## Create/update the Cognito stack (redirect URLs = local ori
 
 .PHONY: aws-cognito-env
 aws-cognito-env: ## Print the .env lines for the deployed user pool (replace the empty COGNITO_* ones)
-	@test -n "$(COGNITO_POOL_ID)" || { echo "Cognito stack not found: run \`make aws-cognito-deploy\` first"; exit 1; }
+	@test -n "$(COGNITO_POOL_ID)" || { echo "Cognito user pool not found: run \`make infra-plan\` or check HCP Terraform"; exit 1; }
 	@echo
 	@echo "Add to .env (replacing the empty COGNITO_* lines):"
 	@echo
 	@echo "COGNITO_REGION=$(AWS_REGION)"
 	@echo "COGNITO_USER_POOL_ID=$(COGNITO_POOL_ID)"
 	@echo "COGNITO_CLIENT_ID=$(COGNITO_CLIENT)"
-	@echo "COGNITO_DOMAIN=$(call cognito_output,HostedUiDomain)"
-	@echo "COGNITO_GOOGLE_ENABLED=$(call cognito_output,GoogleEnabled)"
+	@echo "COGNITO_DOMAIN=$(call tf_output,hosted_ui_domain)"
+	@echo "COGNITO_GOOGLE_ENABLED=$(call tf_output,google_enabled)"
 	@echo
+
+.PHONY: infra-plan
+infra-plan: aws-check ## Run terraform plan for infra via HCP Terraform
+	@cd infra && terraform plan
+
+.PHONY: infra-outputs
+infra-outputs: ## Show terraform outputs from HCP Terraform
+	@cd infra && terraform output
 
 .PHONY: aws-cognito-outputs
 aws-cognito-outputs: ## Show Cognito stack outputs (pool, client, Hosted UI domain)
@@ -391,8 +401,8 @@ aws-reports-deploy: aws-backend-push aws-backend-stack aws-reports-stack ## Buil
 
 .PHONY: report-now
 report-now: aws-check ## Request an on-demand report via SQS, e.g. `make report-now WEEK=2026-W40`
-	@queue_url="$(call reports_output,QueueUrl)"; \
-	[ -n "$$queue_url" ] || { echo "Reports stack not found: run \`make aws-reports-stack\` first"; exit 1; }; \
+	@queue_url="$(call tf_output,queue_url)"; \
+	[ -n "$$queue_url" ] || { echo "Reports queue not found: run \`make infra-plan\` or check HCP Terraform"; exit 1; }; \
 	echo "Sending report request to $$queue_url (week: $(or $(WEEK),previous week))..."; \
 	payload='{"week": $(if $(WEEK),"$(WEEK)",null), "source": "sqs"}'; \
 	aws sqs send-message --queue-url "$$queue_url" --message-body "$$payload" --output json
@@ -412,8 +422,8 @@ aws-reports-outputs: ## Show reports stack outputs
 
 .PHONY: aws-reports-ls
 aws-reports-ls: aws-check ## List all reports stored in the S3 reports bucket
-	@bucket="$(call reports_output,ReportsBucketName)"; \
-	[ -n "$$bucket" ] || { echo "Reports stack not found: run \`make aws-reports-stack\` first"; exit 1; }; \
+	@bucket="$(call tf_output,reports_bucket_name)"; \
+	[ -n "$$bucket" ] || { echo "Reports bucket not found: run \`make infra-plan\` or check HCP Terraform"; exit 1; }; \
 	aws s3 ls "s3://$$bucket/reports/" --recursive
 
 .PHONY: aws-reports-destroy

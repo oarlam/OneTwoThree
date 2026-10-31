@@ -1,0 +1,10 @@
+project_name       = "meetings"
+region             = "us-east-1"
+architecture       = "arm64"
+parser_model       = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+parser_image_tag   = "a34702f-dirty-20261028165838"
+builder_image_tag  = "486cfa2"
+reports_from_email = "arlamovskao@gmail.com"
+reports_to_email   = "arlamovskao@gmail.com"
+google_client_id   = "740856258974-p226psbfmnalags4ai0sd7ppbdb5pqrb.apps.googleusercontent.com"
+

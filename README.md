@@ -48,7 +48,8 @@ front/            # Vite + React + TypeScript + Tailwind + shadcn/ui
     lib/auth.ts   # Cognito sign-in/up, session and token refresh, Google (Hosted UI + PKCE)
     lib/api.ts    # typed fetch wrapper (VITE_API_URL = backend origin, empty = same origin)
   nginx.conf      # serves the SPA, proxies /api to backend
-infra/            # CloudFormation: cognito, backend-ecr, backend (Lambda + Aurora), frontend (S3 + CloudFront)
+infra/            # Terraform (HCP Terraform): versions.tf, variables.tf, auth.tf, reports.tf, ai.tf, outputs.tf
+                  # CloudFormation base stacks: backend-ecr, backend (Lambda + Aurora), frontend (S3 + CloudFront)
 ```
 
 ## API
@@ -141,12 +142,21 @@ Config lives in `back/pyproject.toml` (`[tool.ruff]`), `front/eslint.config.js` 
 
 ## Deploy to AWS (backend on Lambda + Aurora Serverless, frontend on CloudFront)
 
-Everything is deployed to **us-east-1**. CloudFront accepts custom-domain certificates only from that region. Infrastructure is CloudFormation in `infra/`:
+Everything is deployed to **us-east-1**. Application infrastructure (Cognito auth, event-driven reports, Bedrock AI agenda parser) is managed via **Terraform** and **HCP Terraform** (`infra/*.tf`). Base stacks (VPC, Aurora DB, ECR, Frontend CloudFront) remain in CloudFormation:
 
-- `infra/cognito.yaml`: Cognito user pool (email + password, self sign-up with email code), public app client, Hosted UI domain, and Google as an identity provider when `GOOGLE_CLIENT_ID` is set.
+- `infra/versions.tf`, `variables.tf`, `outputs.tf`: Terraform configuration, providers, and outputs with remote state managed in HCP Terraform (`ooad-oarlam/meetings-dev`).
+- `infra/auth.tf`: Cognito user pool, app client, Hosted UI domain, and Google IdP.
+- `infra/reports.tf`: Event-driven weekly reports (EventBridge Scheduler, SQS, S3 bucket with gateway VPCEndpoint, builder and mailer Lambdas).
+- `infra/ai.tf`: Agenda parser Lambda outside VPC with Bedrock permissions and Function URL.
 - `infra/backend-ecr.yaml`: ECR repository for the backend's Lambda container image (`back/Dockerfile.lambda`).
 - `infra/backend.yaml`: VPC with private subnets, Aurora Serverless v2 PostgreSQL (scales to 0 ACU when idle), and a Lambda function with a public **function URL**, which is the backend URL.
 - `infra/frontend.yaml`: private S3 bucket and CloudFront distribution for the SPA on the **flat-rate Free plan** ($0/month, with the WAF web ACL the plan requires), with an optional custom domain.
+
+### Infrastructure Management (Terraform & HCP Terraform)
+
+- Run `make infra-plan` to review proposed infrastructure changes via HCP Terraform.
+- Run `make infra-outputs` to view exported IDs, URLs, and endpoints.
+- Continuous deployment: Changes pushed or merged to `main` are automatically planned and applied in HCP Terraform using dynamic AWS IAM OIDC credentials (`hcp-terraform-ooad-oarlam`). Sensitive secrets (`google_client_secret`) live securely in HCP Terraform workspace variables.
 
 Every resource carries the tag `PROJECT_NAME=<project>`. It is set in the templates and as a stack tag, and `cert.sh` puts it on the ACM certificate. Some resource types can't be tagged in AWS at all: function URLs, Lambda permissions, the bucket policy, the CloudFront origin access control, Route 53 records and the pricing plan subscription.
 
