@@ -80,6 +80,13 @@ resource "aws_cognito_identity_provider" "google" {
     email_verified = "email_verified"
     name           = "name"
   }
+
+  lifecycle {
+    ignore_changes = [
+      provider_details,
+      attribute_mapping,
+    ]
+  }
 }
 
 resource "aws_cognito_user_pool_client" "main" {
