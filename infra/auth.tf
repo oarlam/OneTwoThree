@@ -46,6 +46,12 @@ resource "aws_cognito_user_pool" "main" {
     mutable             = true
   }
 
+  lifecycle {
+    ignore_changes = [
+      schema,
+    ]
+  }
+
   tags = {
     PROJECT_NAME = var.project_name
   }
